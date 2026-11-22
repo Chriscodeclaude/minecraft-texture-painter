@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PvP Texture Painter</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -56,6 +56,7 @@
   }
   @media (min-width: 821px) { .top { display: none; } }
 </style>
+</head><body>
 
 <div class="top"><select id="pickItem" aria-label="Item"></select></div>
 <div class="app">
@@ -107,14 +108,27 @@ const $ = id => document.getElementById(id);
 const store = (() => { try { return window.localStorage; } catch { return null; } })();
 const get = k => { try { return store && store.getItem(k); } catch { return null; } };
 const put = (k, v) => { try { store && store.setItem(k, v); } catch {} };
+const del = k => { try { store && store.removeItem(k); } catch {} };
 
 // ---- one canvas per item (starts as a white shape) ----
 function loadImg(src) { return new Promise(r => { const i = new Image(); i.onload = () => r(i); i.onerror = () => r(null); i.src = src; }); }
+// "done" = the item differs from its white starting shape
+function changed(it) {
+  const w = it.cv.width, h = it.cv.height;
+  if (w !== it.sw || h !== it.sh) return true;
+  const d = it.cx.getImageData(0, 0, w, h).data;
+  for (let i = 0; i < d.length; i++) if (d[i] !== it.startPx[i]) return true;
+  return false;
+}
 for (const it of ITEMS) {
-  const img = (get('tp:' + it.id) && await loadImg(get('tp:' + it.id))) || await loadImg('data:image/png;base64,' + it.start);
+  const start = await loadImg('data:image/png;base64,' + it.start);
+  const sc = document.createElement('canvas'); sc.width = start.width; sc.height = start.height;
+  const sx = sc.getContext('2d'); sx.drawImage(start, 0, 0);
+  it.sw = start.width; it.sh = start.height; it.startPx = sx.getImageData(0, 0, it.sw, it.sh).data;
+  const img = (get('tp:' + it.id) && await loadImg(get('tp:' + it.id))) || start;
   it.cv = document.createElement('canvas'); it.cv.width = img.width; it.cv.height = img.height;
   it.cx = it.cv.getContext('2d', { willReadFrequently: true }); it.cx.drawImage(img, 0, 0);
-  it.done = !!get('tp:done:' + it.id);
+  it.done = changed(it);
   it.hist = [];   // undo: list of strokes, each stroke = old pixels [x, y, r, g, b, a]
 }
 
@@ -166,8 +180,17 @@ function undo() {
 }
 $('undo').onclick = undo;
 addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); } });
-let saveTimer;
-function remember(it) { clearTimeout(saveTimer); saveTimer = setTimeout(() => { put('tp:' + it.id, it.cv.toDataURL()); put('tp:done:' + it.id, '1'); drawList(); }, 300); }
+// save to the browser; one timer per item so switching items never drops a save
+const saveTimers = new Map();
+function saveNow(it, redraw = true) {
+  clearTimeout(saveTimers.get(it.id)); saveTimers.delete(it.id);
+  it.done = changed(it);
+  if (it.done) put('tp:' + it.id, it.cv.toDataURL());
+  else del('tp:' + it.id);
+  del('tp:done:' + it.id);   // old key, no longer used
+  if (redraw) drawList();
+}
+function remember(it) { clearTimeout(saveTimers.get(it.id)); saveTimers.set(it.id, setTimeout(() => saveNow(it), 300)); }
 
 // ---- 2D pixel grid ----
 const grid = $('grid'), gx = grid.getContext('2d');
@@ -265,6 +288,8 @@ $('png').onclick = async () => {
   say(await offerFile(it.out.split('/').pop(), await pngOf(it)));
 };
 $('zip').onclick = async () => {
+  for (const it of ITEMS) if (saveTimers.has(it.id)) saveNow(it, false);
+  drawList();
   const painted = ITEMS.filter(it => it.done);
   if (!painted.length) { say('Paint something first.'); return; }
   say('Making the pack…');
@@ -288,7 +313,7 @@ $('connect').onclick = async () => {
   let found = 0;
   for (const it of ITEMS) {
     try { const f = await (await fileIn(dir, it.out, false)).getFile(); const img = await loadImg(URL.createObjectURL(f));
-      if (!img) continue; it.cv.width = img.width; it.cv.height = img.height; it.cx.drawImage(img, 0, 0); it.done = true; it.hist = []; found++; } catch {}
+      if (!img) continue; it.cv.width = img.width; it.cv.height = img.height; it.cx.drawImage(img, 0, 0); it.hist = []; saveNow(it, false); found++; } catch {}
   }
   say(`Connected. Found ${found} saved textures.`); drawList(); show();
 };
@@ -296,7 +321,7 @@ $('save').onclick = async () => {
   const it = ITEMS[cur];
   if (!dir) { say('Connect the pack folder first.'); return; }
   try { const w = await (await fileIn(dir, it.out, true)).createWritable(); await w.write(await pngOf(it)); await w.close();
-    it.done = true; put('tp:done:' + it.id, '1'); say(`Saved ${it.name} ✅`); drawList();
+    saveNow(it); say(`Saved ${it.name} ✅`);
   } catch (err) { say('Could not save: ' + err.message); }
 };
 
