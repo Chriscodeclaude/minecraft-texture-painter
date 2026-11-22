@@ -1,0 +1,306 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<title>PvP Texture Painter</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: item list | 3D view | pixels + colours. On phones: one column. Dark navy look from krisz's palette. */
+  :root {
+    --navy: #1E3058; --steel: #496896; --grey: #A4B5D3; --light: #B0CBE6; --pink: #FED6CE;
+    --bg: #121c33; --panel: #1E3058; --text: #eef3fb; --muted: #A4B5D3; --line: #2d4473; --cellA: #16223f; --cellB: #1b2a4c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  .app { display: grid; grid-template-columns: 240px 1fr 330px; height: 100%; }
+  aside, .right { background: var(--panel); overflow-y: auto; padding-block: 12px; padding-inline: 12px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  .item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px; border: 0; border-radius: 6px;
+          background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  .item:hover { background: var(--line); }
+  .item.on { background: var(--steel); }
+  .item .num { color: var(--muted); width: 22px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .item .mark { margin-left: auto; }
+  .item canvas { width: 20px; height: 20px; image-rendering: pixelated; }
+  .center { position: relative; min-height: 0; }
+  #view { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  .title { position: absolute; top: 14px; left: 16px; font-size: 20px; font-weight: 600; pointer-events: none; }
+  .hint { position: absolute; bottom: 14px; left: 16px; right: 16px; color: var(--muted); pointer-events: none; }
+  #pickItem { display: none; }
+  #grid { width: 100%; max-width: 100%; aspect-ratio: 1; image-rendering: pixelated; background: #0c1426; border-radius: 6px; cursor: crosshair; display: block; touch-action: none; }
+  .swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
+  .sw { aspect-ratio: 1; border-radius: 5px; border: 2px solid rgba(255,255,255,.25); cursor: pointer; padding: 0; }
+  .sw.on { border-color: #fff; outline: 2px solid var(--navy); }
+  .theme { grid-template-columns: repeat(5, 1fr); }
+  .now { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .now .big { width: 40px; height: 40px; border-radius: 8px; border: 2px solid #fff; }
+  input[type=color] { width: 100%; height: 36px; border: 0; background: none; cursor: pointer; padding: 0; }
+  .btn { display: block; width: 100%; margin-top: 8px; padding: 10px; border: 0; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer;
+         background: var(--pink); color: var(--navy); }
+  .btn.alt { background: var(--steel); color: var(--text); }
+  .btn:focus-visible, .item:focus-visible, .sw:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
+  .status { margin-top: 8px; color: var(--muted); font-size: 13px; min-height: 18px; }
+
+  /* phones and narrow windows */
+  @media (max-width: 820px) {
+    body { overflow: auto; }
+    .app { display: block; height: auto; }
+    aside { display: none; }
+    #pickItem { display: block; width: 100%; padding: 10px; border-radius: 8px; border: 0; font: inherit; font-size: 16px;
+                background: var(--steel); color: var(--text); }
+    .top { padding-block: 10px 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); background: var(--panel); }
+    .center { height: 52vh; }
+    .title { display: none; }
+    .hint { font-size: 12px; bottom: 8px; }
+    .right { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 24px; }
+  }
+  @media (min-width: 821px) { .top { display: none; } }
+</style>
+
+<div class="top"><select id="pickItem" aria-label="Item"></select></div>
+<div class="app">
+  <aside id="list"></aside>
+  <div class="center">
+    <canvas id="view"></canvas>
+    <div class="title" id="title"></div>
+    <div class="hint">Drag to spin · scroll or pinch to zoom · tap a pixel to paint</div>
+  </div>
+  <div class="right">
+    <h2>Pixels</h2>
+    <canvas id="grid"></canvas>
+    <button class="btn alt" id="undo">↶ Undo</button>
+    <h2>Theme colours</h2>
+    <div class="swatches theme" id="theme"></div>
+    <h2>More colours</h2>
+    <div class="swatches" id="more"></div>
+    <h2>Any colour</h2>
+    <input type="color" id="picker" value="#496896">
+    <div class="now"><div class="big" id="nowSw"></div><div id="nowHex"></div></div>
+    <h2>Save</h2>
+    <button class="btn" id="png">Download this item (.png)</button>
+    <button class="btn" id="zip">Download pack (.zip)</button>
+    <button class="btn alt" id="connect" hidden>Connect pack folder</button>
+    <button class="btn alt" id="save" hidden>Save to pack folder</button>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const ITEMS = [{"n":1,"id":"wooden_sword","name":"Wooden sword","group":"Weapon","kind":"item","out":"textures/item/wooden_sword.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABeSURBVDhPrcxZEoAgDARR7n9prWiFGpqERXx/wDSlfHAJvk1pvP0BY8NNiqHhJsXQcJNiaLh5RI9t9tL3Bkd6dmw6DBS3IUaOu6FfY8ddiIGe/S40G2b31ShecvrBDVurTsD+xPWoAAAAAElFTkSuQmCC","done":false},{"n":2,"id":"stone_sword","name":"Stone sword","group":"Weapon","kind":"item","out":"textures/item/stone_sword.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABeSURBVDhPrcxZEoAgDARR7n9prWiFGpqERXx/wDSlfHAJvk1pvP0BY8NNiqHhJsXQcJNiaLh5RI9t9tL3Bkd6dmw6DBS3IUaOu6FfY8ddiIGe/S40G2b31ShecvrBDVurTsD+xPWoAAAAAElFTkSuQmCC","done":false},{"n":3,"id":"iron_sword","name":"Iron sword","group":"Weapon","kind":"item","out":"textures/item/iron_sword.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABeSURBVDhPrcxZEoAgDARR7n9prWiFGpqERXx/wDSlfHAJvk1pvP0BY8NNiqHhJsXQcJNiaLh5RI9t9tL3Bkd6dmw6DBS3IUaOu6FfY8ddiIGe/S40G2b31ShecvrBDVurTsD+xPWoAAAAAElFTkSuQmCC","done":false},{"n":4,"id":"diamond_sword","name":"Diamond sword","group":"Weapon","kind":"item","out":"textures/item/diamond_sword.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABeSURBVDhPrcxZEoAgDARR7n9prWiFGpqERXx/wDSlfHAJvk1pvP0BY8NNiqHhJsXQcJNiaLh5RI9t9tL3Bkd6dmw6DBS3IUaOu6FfY8ddiIGe/S40G2b31ShecvrBDVurTsD+xPWoAAAAAElFTkSuQmCC","done":false},{"n":5,"id":"netherite_sword","name":"Netherite sword","group":"Weapon","kind":"item","out":"textures/item/netherite_sword.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABeSURBVDhPrcxZEoAgDARR7n9prWiFGpqERXx/wDSlfHAJvk1pvP0BY8NNiqHhJsXQcJNiaLh5RI9t9tL3Bkd6dmw6DBS3IUaOu6FfY8ddiIGe/S40G2b31ShecvrBDVurTsD+xPWoAAAAAElFTkSuQmCC","done":false},{"n":6,"id":"diamond_axe","name":"Diamond axe","group":"Weapon","kind":"item","out":"textures/item/diamond_axe.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABESURBVDhP5cxBCgAgCERR73/pQkiQjwOV0Ka3lPmavTAW3rdEfPWEseNGYphxW2KUcSsxzLiVGAbuSgxa8ZEfY9eKOybkLO8Rxj0JkwAAAABJRU5ErkJggg==","done":false},{"n":7,"id":"netherite_axe","name":"Netherite axe","group":"Weapon","kind":"item","out":"textures/item/netherite_axe.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABESURBVDhP5cxBCgAgCERR73/pQkiQjwOV0Ka3lPmavTAW3rdEfPWEseNGYphxW2KUcSsxzLiVGAbuSgxa8ZEfY9eKOybkLO8Rxj0JkwAAAABJRU5ErkJggg==","done":false},{"n":8,"id":"mace","name":"Mace","group":"Weapon","kind":"item","out":"textures/item/mace.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABbSURBVDhPpcxRCsAgDARR73/plkCV7NiVqO+rDbO2VvB8eC/p4/xI/l7S6Yy9YEzsBWOHu4HhCrcDQ4c7wZjYC8bEXjDM//1mufDvNnHjkuNxHm6Pw9U43D7wAt5mioQBMHgiAAAAAElFTkSuQmCC","done":false},{"n":9,"id":"trident","name":"Trident","group":"Weapon","kind":"item","out":"textures/item/trident.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABJSURBVDhP7c5LCgAgDENB739pP2Agpoi2BVfOTskTS3mhTnp/BTEecD22i3E+SsUDR8D3ujfWNPATHivdGhow3RqusfpxQCruGvu6Bwgz5JRUAAAAAElFTkSuQmCC","done":false},{"n":10,"id":"diamond_spear","name":"Diamond spear","group":"Weapon","kind":"item","out":"textures/item/diamond_spear.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABJSURBVDhP7csxDoAwDATB/P/TQGPJDBeEQpvpLN+OseBo/L3qYXETGXVubxzL/YOB3EdGxd2UYXEXGRV3UQq8p1L82Y4X/IovJ0SjJujJQV/zAAAAAElFTkSuQmCC","done":false},{"n":11,"id":"bow","name":"Bow","group":"Weapon","kind":"item","out":"textures/item/bow.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABOSURBVDhPxcwxDgAgCARB//9pzRUQ3ECBJjqdwjLGSxM4TzEi7jsuZtg4Lpo434ugiuKcf+4qln+xVAf4LmUH3sTCA61Y4oF2LFexOY0X+ZQW+O4VFmMAAAAASUVORK5CYII=","done":false},{"n":12,"id":"crossbow","name":"Crossbow","group":"Weapon","kind":"item","out":"textures/item/crossbow_standby.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABtSURBVDhPpZFRCsAgDMW8/6U7dHS8l9bJWP5sExEc4yMREZy9MoMOegtdul5ha0+jnNAzVGBEZwvjJHf0DUaEfoFBB5sHSnombBedoDPiNf4/zzonFquoMXdkK2ic0EmKYFWD5zd0jvy+YKLxBSsUzkB6sZUiAAAAAElFTkSuQmCC","done":false},{"n":13,"id":"arrow","name":"Arrow","group":"Weapon","kind":"item","out":"textures/item/arrow.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA4SURBVDhPY2AYcuA/EkCXwwuQNcIAuhq8gCLNIECRAciaKNJMMhiCmmEaKdZMsQHockQDijSTCwDLd5dpvkf+eQAAAABJRU5ErkJggg==","done":false},{"n":14,"id":"spectral_arrow","name":"Spectral arrow","group":"Weapon","kind":"item","out":"textures/item/spectral_arrow.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA4SURBVDhPY2AYcuA/EkCXwwuQNcIAuhq8gCLNIECRAciaKNJMMhiCmmEaKdZMsQHockQDijSTCwDLd5dpvkf+eQAAAABJRU5ErkJggg==","done":false},{"n":15,"id":"tipped_arrow","name":"Tipped arrow","group":"Weapon","kind":"item","out":"textures/item/custom/tipped_arrow.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABOSURBVDhP1Y1JEgAgCMP4/6f1hFNqcRk9aG5CImbfUQDeDcHQYSfAUkyTmBdLH7DUFgBGmZPSXdzhnZjfKS4qWc0CGE9lxVHsqFjNrlIBfkW/QXq1prYAAAAASUVORK5CYII=","done":false},{"n":16,"id":"firework_rocket","name":"Firework rocket","group":"Weapon","kind":"item","out":"textures/item/firework_rocket.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABCSURBVDhPY2AY9OD/////0cWIBiDNMIAuRxAga4YBdDV4AbpmEEBXQxBQpBkERg2gkQHofLwA3QCiNaIDkmwlFQAABJOrVR45htEAAAAASUVORK5CYII=","done":false},{"n":17,"id":"wind_charge","name":"Wind charge","group":"Weapon","kind":"item","out":"textures/item/wind_charge.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABCSURBVDhP3cwxFgAQDERB9780LyqGUOhMm/0p5V8V3lOGI7dbRjs2naMT287Rjf37g+AoYzdxLPcLg5HblGFw85EGP5pSvHRQe+UAAAAASUVORK5CYII=","done":false},{"n":18,"id":"diamond_helmet","name":"Diamond helmet","group":"Armor","kind":"item","out":"textures/item/diamond_helmet.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA+SURBVDhP7cvBCQAwDMNA7790+zNEVAuE3tPIyU5HsHviidgPjA1/xdDwVwwNf8XQ8FcMDX/F0PA3WGT7l1zsDDbYlWwkGQAAAABJRU5ErkJggg==","done":false},{"n":19,"id":"diamond_chestplate","name":"Diamond chestplate","group":"Armor","kind":"item","out":"textures/item/diamond_chestplate.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABLSURBVDhPzcwxCgAwCARB///phBQKLh4mkMJp3dNshFV4ang40rpreHC3dxl0Bj14fcRdYKhwFxgq3AWGCneBocJdwpjYlzhy7L7YGyIl901BjAcAAAAASUVORK5CYII=","done":false},{"n":20,"id":"diamond_leggings","name":"Diamond leggings","group":"Armor","kind":"item","out":"textures/item/diamond_leggings.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABFSURBVDhPzcsxCgAgEANB//9p7Q5MGGydMmzW+s5+yP6SseRvZCj5GxlK/kaGkr+hUHtRqL0o1F4Uai8KtReF2otC7X84MW6ecOYo3KkAAAAASUVORK5CYII=","done":false},{"n":21,"id":"diamond_boots","name":"Diamond boots","group":"Armor","kind":"item","out":"textures/item/diamond_boots.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABHSURBVDhP3cwxDgAgCARB/v9pDYUGOVdpdcpjg9l/WnDatmIYY9oFhbQLCmkXFNIuKKR9kSNXuWHgqvdrkPcBH8xDUu0e0wH1LV6wxUJ/GwAAAABJRU5ErkJggg==","done":false},{"n":22,"id":"netherite_helmet","name":"Netherite helmet","group":"Armor","kind":"item","out":"textures/item/netherite_helmet.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA+SURBVDhP7cvBCQAwDMNA7790+zNEVAuE3tPIyU5HsHviidgPjA1/xdDwVwwNf8XQ8FcMDX/F0PA3WGT7l1zsDDbYlWwkGQAAAABJRU5ErkJggg==","done":false},{"n":23,"id":"netherite_chestplate","name":"Netherite chestplate","group":"Armor","kind":"item","out":"textures/item/netherite_chestplate.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABLSURBVDhPzcwxCgAwCARB///phBQKLh4mkMJp3dNshFV4ang40rpreHC3dxl0Bj14fcRdYKhwFxgq3AWGCneBocJdwpjYlzhy7L7YGyIl901BjAcAAAAASUVORK5CYII=","done":false},{"n":24,"id":"netherite_leggings","name":"Netherite leggings","group":"Armor","kind":"item","out":"textures/item/netherite_leggings.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABFSURBVDhPzcsxCgAgEANB//9p7Q5MGGydMmzW+s5+yP6SseRvZCj5GxlK/kaGkr+hUHtRqL0o1F4Uai8KtReF2otC7X84MW6ecOYo3KkAAAAASUVORK5CYII=","done":false},{"n":25,"id":"netherite_boots","name":"Netherite boots","group":"Armor","kind":"item","out":"textures/item/netherite_boots.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABLSURBVDhP3cxBDgAgCANB/v9pjYk0CBa46hzpBpG/jM3fVbUjuEXZBlmUbWAjG7J7wEJ2D1jI7gcfLZ2NBkt3LwN/V/QBBqfbPWYCIzZGyACZ/hUAAAAASUVORK5CYII=","done":false},{"n":26,"id":"shield","name":"Shield","group":"Armor","kind":"item","out":"textures/entity/shield/shield_base_nopattern.png","start":"iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAACySURBVHhe7c4xCgRBEMPA+f+nb7lgEsFCL7TBgSo2yOecc35h/8abL9sIHkhh95ruYngghd1ruovhgRR2r+kuhgdS2L2muxgeSGH3mu5ieKAVf69hqBV/r2GoFX+vYagVf69hqBV/r2GoFX+vYSiF3Ro8msJuDR5NYbcGj6awW4NHU9itwaMp7Nbg0RR2a/BoCrs1eDSF3Ro8msJuDR5NYVeSJEmSJEmSJEmSJEmSJElhD/DuJXarvOJOAAAAAElFTkSuQmCC","done":false},{"n":27,"id":"elytra","name":"Elytra","group":"Armor","kind":"item","out":"textures/item/elytra.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA9SURBVDhPY2AYdOA/AYCuHg7QFRICRGkmVp6gAnRxGBg1gIiYIEYODtAVgAAxcigAnwJ8cnBASAEh+YEBAFhT5igxswpWAAAAAElFTkSuQmCC","done":false},{"n":28,"id":"totem_of_undying","name":"Totem of Undying","group":"Armor","kind":"item","out":"textures/item/totem_of_undying.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABPSURBVDhPtcxBCsAgAANB//9pBUGoEy1S6pw3KeWGumG35Ej2wYHsgwPZBweyDw5kHxzIvjM69d/Bl5Np/GQo++BA9kuOBrsth4Pdq9NxA4NC9hiNhy6JAAAAAElFTkSuQmCC","done":false},{"n":29,"id":"golden_apple","name":"Golden apple","group":"Food","kind":"item","out":"textures/item/golden_apple.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABKSURBVDhP7c3BCoAgEEVR//+nJ4wUPDkYGK06S3l3LOULERG+PVbj7QO+LbVf5e7GIGN3crRi/x+4OMrYdQ4zdgPHcj9l1Lh7xQEfqMZILNsXWQAAAABJRU5ErkJggg==","done":false},{"n":30,"id":"enchanted_golden_apple","name":"Enchanted golden apple","group":"Food","kind":"item","out":"textures/item/custom/enchanted_golden_apple.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABKSURBVDhP7c3BCoAgEEVR//+nJ4wUPDkYGK06S3l3LOULERG+PVbj7QO+LbVf5e7GIGN3crRi/x+4OMrYdQ4zdgPHcj9l1Lh7xQEfqMZILNsXWQAAAABJRU5ErkJggg==","done":false},{"n":31,"id":"golden_carrot","name":"Golden carrot","group":"Food","kind":"item","out":"textures/item/golden_carrot.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABTSURBVDhPtcxBCsAgDEVB73/pFgtKOo0iSmeb/1LKn67A2zKfLD2M0YjNh0HkNmUk9y+OR+w6hzO2y7Fd51BtY/dwHLlNGTXuUkaVm6mjuNoOT91MXH6Q9aMoCAAAAABJRU5ErkJggg==","done":false},{"n":32,"id":"cooked_beef","name":"Cooked steak","group":"Food","kind":"item","out":"textures/item/cooked_beef.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABISURBVDhP5cxBCgAgDAQx//9pRUHBUIV6NdfutJQ/VHi/Mp7chYzkfuM4YjM4urFNxZ196oFtKu7sUw9sF4cRm41juT96Dl80hgeibGTOmAUAAAAASUVORK5CYII=","done":false},{"n":33,"id":"chorus_fruit","name":"Chorus fruit","group":"Food","kind":"item","out":"textures/item/chorus_fruit.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABTSURBVDhPzcxBCoAwDEXB3v/SkQiKHdKAduOsSvkvY/xaRIR/rWeQ708HOu5LRhWbieMVu4njis3NYcf2VZzs9w8kRx3bk6MVu4ljuS8ZXdxtOwARTLZYvcPkNQAAAABJRU5ErkJggg==","done":false},{"n":34,"id":"experience_bottle","name":"Bottle o\u0027 enchanting","group":"Food","kind":"item","out":"textures/item/experience_bottle.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABYSURBVDhPtcsxDsAgDARB/v9pIiMFWQN2qkx7t2P8aSZun3L88lMyzPxeGWV+S4bBT8s4+CkZZn4PBjc2m8eO7eKpY7t46tgunjq2m8cbm4NB5rdkGPyEBw0jwkym9lDZAAAAAElFTkSuQmCC","done":false},{"n":35,"id":"splash_healing","name":"Splash potion of Healing","group":"Potion","kind":"item","out":"textures/item/custom/splash_potion_healing.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABRSURBVDhP1c1BCgAhDATB/P/TimAgaUdR8WLdXKazZl8pHb9v8fjqQIyPD8Tg+MCzWL2X/G8KtwMGCpuEY4VNwrHCJuFYYTNgEHE7xbDh5okKwr8e8EqzA+cAAAAASUVORK5CYII=","done":false},{"n":36,"id":"splash_strength","name":"Splash potion of Strength","group":"Potion","kind":"item","out":"textures/item/custom/splash_potion_strength.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABRSURBVDhP1c1BCgAhDATB/P/TimAgaUdR8WLdXKazZl8pHb9v8fjqQIyPD8Tg+MCzWL2X/G8KtwMGCpuEY4VNwrHCJuFYYTNgEHE7xbDh5okKwr8e8EqzA+cAAAAASUVORK5CYII=","done":false},{"n":37,"id":"splash_speed","name":"Splash potion of Speed","group":"Potion","kind":"item","out":"textures/item/custom/splash_potion_speed.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABRSURBVDhP1c1BCgAhDATB/P/TimAgaUdR8WLdXKazZl8pHb9v8fjqQIyPD8Tg+MCzWL2X/G8KtwMGCpuEY4VNwrHCJuFYYTNgEHE7xbDh5okKwr8e8EqzA+cAAAAASUVORK5CYII=","done":false},{"n":38,"id":"splash_poison","name":"Splash potion of Poison","group":"Potion","kind":"item","out":"textures/item/custom/splash_potion_poison.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABRSURBVDhP1c1BCgAhDATB/P/TimAgaUdR8WLdXKazZl8pHb9v8fjqQIyPD8Tg+MCzWL2X/G8KtwMGCpuEY4VNwrHCJuFYYTNgEHE7xbDh5okKwr8e8EqzA+cAAAAASUVORK5CYII=","done":false},{"n":39,"id":"splash_weakness","name":"Splash potion of Weakness","group":"Potion","kind":"item","out":"textures/item/custom/splash_potion_weakness.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABRSURBVDhP1c1BCgAhDATB/P/TimAgaUdR8WLdXKazZl8pHb9v8fjqQIyPD8Tg+MCzWL2X/G8KtwMGCpuEY4VNwrHCJuFYYTNgEHE7xbDh5okKwr8e8EqzA+cAAAAASUVORK5CYII=","done":false},{"n":40,"id":"potion_strength","name":"Potion of Strength","group":"Potion","kind":"item","out":"textures/item/custom/potion_strength.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABTSURBVDhPzc8xCsAgEEVB73/phC0Ed9woJBaZTvxPsLVfuwbebY1x52bJOLjZ6tGrOHx6wMjzUvo43E4MKjaJ44pN4rhikziu2EwMRm4fGQY3R9xb9ibopOtqigAAAABJRU5ErkJggg==","done":false},{"n":41,"id":"potion_speed","name":"Potion of Speed","group":"Potion","kind":"item","out":"textures/item/custom/potion_speed.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABTSURBVDhPzc8xCsAgEEVB73/phC0Ed9woJBaZTvxPsLVfuwbebY1x52bJOLjZ6tGrOHx6wMjzUvo43E4MKjaJ44pN4rhikziu2EwMRm4fGQY3R9xb9ibopOtqigAAAABJRU5ErkJggg==","done":false},{"n":42,"id":"potion_fire_resistance","name":"Potion of Fire Resistance","group":"Potion","kind":"item","out":"textures/item/custom/potion_fire_resistance.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABTSURBVDhPzc8xCsAgEEVB73/phC0Ed9woJBaZTvxPsLVfuwbebY1x52bJOLjZ6tGrOHx6wMjzUvo43E4MKjaJ44pN4rhikziu2EwMRm4fGQY3R9xb9ibopOtqigAAAABJRU5ErkJggg==","done":false},{"n":43,"id":"lingering_potion","name":"Lingering potion","group":"Potion","kind":"item","out":"textures/item/custom/lingering_potion.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABMSURBVDhP7c1BCsAgDEVB73/pFBeFZExbCnXX2Yj4H47x2ysiIp+vzfDk2yMj77fyz3K7MOjYFI47NoXjjk3huGOzMMjcXjKc3HziAO/79wlhJNqQAAAAAElFTkSuQmCC","done":false},{"n":44,"id":"ender_pearl","name":"Ender pearl","group":"Moving","kind":"item","out":"textures/item/ender_pearl.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABISURBVDhPzczBCQAwCARB+286ASEiqxyYl/P1VrPVTsKblEPitmDQYRM4VNg6jhS2o/hZ9mD6hK3jSGEbOOywKRhk3Erf4cQFibjiLHdA7VcAAAAASUVORK5CYII=","done":false},{"n":45,"id":"fishing_rod","name":"Fishing rod","group":"Moving","kind":"item","out":"textures/item/fishing_rod.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABeSURBVDhPxYxbDsAwCMN6/0t3arUg5sL60KT5jySmlD+oN8yXkHz0wMvbDyg3uEmJxOUHkaz8uQzIZHX+HniT1TMzZnIjyzufySLaMOtQFNz426BA2efeMyiQWX/MBerJCwRtSbKUAAAAAElFTkSuQmCC","done":false},{"n":46,"id":"snowball","name":"Snowball","group":"Moving","kind":"item","out":"textures/item/snowball.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABCSURBVDhP3cwxCgAgEANB//9pRQvBgSBYiDjtba6UZ1V4jxzKfmGcuJsME3eD0Y77Hx50Rom7yTBxtzCWfXQ8vK4Bqya+ULYhUIEAAAAASUVORK5CYII=","done":false},{"n":47,"id":"egg","name":"Egg","group":"Moving","kind":"item","out":"textures/item/egg.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABFSURBVDhP3csxEgAQFENB9780lT9jidrYNi+t/avD/crzZHfkSfYbD7JfGCf+imHirxgm/oph4q8YJv4WxrI/8jTZvWEAtUZmqOgYo0MAAAAASUVORK5CYII=","done":false},{"n":48,"id":"cobweb","name":"Cobweb","group":"Moving","kind":"item","out":"textures/block/cobweb.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAB1SURBVDhPlY7bDoAwCEP3/z+NmRHTllqz8zLohWxVVa1A8l/PhbamqI/7KLhgz6PcqKHHWsOdwILO7iVQdEEt6T5K6Qc0dzDRpXhkiKfHcdGAem62RtKo/Bd6PnOjWQJDrqQZAkUXas159juxgB1nbr50ZGcuHQeibAiNzYcAAAAASUVORK5CYII=","done":false},{"n":49,"id":"water_bucket","name":"Water bucket","group":"Moving","kind":"item","out":"textures/item/water_bucket.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA/SURBVDhP7cxBCsAgEATB/f+nDREUUrp40Yukzj0TcUJJ2A0cZNxVRivu/4M7Dl5GGXedYcbdh7Hspxw1dls8OTtF11sGRr0AAAAASUVORK5CYII=","done":false},{"n":50,"id":"lava_bucket","name":"Lava bucket","group":"Moving","kind":"item","out":"textures/item/lava_bucket.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA/SURBVDhP7cxBCsAgEATB/f+nDREUUrp40Yukzj0TcUJJ2A0cZNxVRivu/4M7Dl5GGXedYcbdh7Hspxw1dls8OTtF11sGRr0AAAAASUVORK5CYII=","done":false},{"n":51,"id":"flint_and_steel","name":"Flint and steel","group":"Moving","kind":"item","out":"textures/item/flint_and_steel.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABYSURBVDhPrcxBEoAgDARB/v9puZhiM24oEPom7qS1254X35dE/OsI48BdidHxgW3XD7hj/E70gHL/cyl0pMPq3eIop0OuCowUtxYj4v6DAXFvMQrcTc2iDk/wUrza7eZQAAAAAElFTkSuQmCC","done":false},{"n":52,"id":"fire_charge","name":"Fire charge","group":"Moving","kind":"item","out":"textures/item/fire_charge.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABCSURBVDhP3cwxCgAgEANB//9pRQvBgSBYiDjtba6UZ1V4jxzKfmGcuJsME3eD0Y77Hx50Rom7yTBxtzCWfXQ8vK4Bqya+ULYhUIEAAAAASUVORK5CYII=","done":false},{"n":53,"id":"end_crystal","name":"End crystal","group":"Explosive","kind":"item","out":"textures/item/end_crystal.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABASURBVDhPY2CgFvhPBsAwAEUACogWxxBAcxU2OawCyJpwgUFsAKlgEBpArEHI6gehAehiyJrQ5TAESAUoBpALAL3FPd9WiShMAAAAAElFTkSuQmCC","done":false},{"n":54,"id":"obsidian","name":"Obsidian","group":"Explosive","kind":"cube","out":"textures/block/obsidian.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVDhPY/hPIWBAFyAVjBowagAIjBowGAwAAF14/C6S1TgxAAAAAElFTkSuQmCC","done":false},{"n":55,"id":"respawn_anchor","name":"Respawn anchor (side)","group":"Explosive","kind":"cube","out":"textures/block/respawn_anchor_side0.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVDhPY/hPIWBAFyAVjBowagAIjBowGAwAAF14/C6S1TgxAAAAAElFTkSuQmCC","done":false},{"n":56,"id":"glowstone","name":"Glowstone","group":"Explosive","kind":"cube","out":"textures/block/glowstone.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVDhPY/hPIWBAFyAVjBowagAIjBowGAwAAF14/C6S1TgxAAAAAElFTkSuQmCC","done":false},{"n":57,"id":"tnt","name":"TNT (side)","group":"Explosive","kind":"cube","out":"textures/block/tnt_side.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAcSURBVDhPY/hPIWBAFyAVjBowagAIjBowGAwAAF14/C6S1TgxAAAAAElFTkSuQmCC","done":false},{"n":58,"id":"tnt_minecart","name":"TNT minecart","group":"Explosive","kind":"item","out":"textures/item/tnt_minecart.png","start":"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABISURBVDhP7cxBCgAgCERR73/posCwX0xQLntb52smlIA3KYYRdwsGO2wGDhW2HUcnT7H7DzIf3DyZYseRwnbg0HEnMW64SVMB5V15ozilweIAAAAASUVORK5CYII=","done":false}];
+
+</script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
+<script type="module">
+import * as THREE from 'three';
+
+const THEME = ['#1E3058', '#496896', '#A4B5D3', '#B0CBE6', '#FED6CE'];
+const MORE = [
+  '#ffffff','#d9d9d9','#a6a6a6','#737373','#404040','#1a1a1a','#000000','#3b2a1e',
+  '#ff4d4d','#c62828','#7f1414','#ff9a3c','#e65c00','#ffd84d','#c9a100','#7a5c00',
+  '#7ddc5b','#3a9d23','#1d5c12','#4fe0c4','#1aa38a','#0b5c4d','#5ab4ff','#1f6fd1',
+  '#0d3a7a','#b98cff','#7b3fd6','#41207a','#ff8fd1','#d6338f','#7a1450','#f2c9a0'];
+const PACK_MCMETA = JSON.stringify({ pack: { description: 'PvP pack', min_format: 97, max_format: 97 } }, null, 2);
+
+let color = '#496896', cur = 0, dir = null;
+const $ = id => document.getElementById(id);
+const store = (() => { try { return window.localStorage; } catch { return null; } })();
+const get = k => { try { return store && store.getItem(k); } catch { return null; } };
+const put = (k, v) => { try { store && store.setItem(k, v); } catch {} };
+
+// ---- one canvas per item (starts as a white shape) ----
+function loadImg(src) { return new Promise(r => { const i = new Image(); i.onload = () => r(i); i.onerror = () => r(null); i.src = src; }); }
+for (const it of ITEMS) {
+  const img = (get('tp:' + it.id) && await loadImg(get('tp:' + it.id))) || await loadImg('data:image/png;base64,' + it.start);
+  it.cv = document.createElement('canvas'); it.cv.width = img.width; it.cv.height = img.height;
+  it.cx = it.cv.getContext('2d', { willReadFrequently: true }); it.cx.drawImage(img, 0, 0);
+  it.done = !!get('tp:done:' + it.id);
+  it.hist = [];   // undo: list of strokes, each stroke = old pixels [x, y, r, g, b, a]
+}
+
+// ---- item list (sidebar on computers, dropdown on phones) ----
+function drawList() {
+  const box = $('list'); box.innerHTML = ''; let g = '';
+  const sel = $('pickItem'); sel.innerHTML = ''; let og = null;
+  ITEMS.forEach((it, i) => {
+    if (it.group !== g) { g = it.group; const h = document.createElement('h2'); h.textContent = g; box.append(h);
+      og = document.createElement('optgroup'); og.label = g; sel.append(og); }
+    const b = document.createElement('button'); b.className = 'item' + (i === cur ? ' on' : '');
+    const th = document.createElement('canvas'); th.width = it.cv.width; th.height = it.cv.height; th.getContext('2d').drawImage(it.cv, 0, 0);
+    b.innerHTML = `<span class="num">${it.n}</span>`; b.append(th);
+    b.insertAdjacentHTML('beforeend', `<span>${it.name}</span><span class="mark">${it.done ? '✅' : '❌'}</span>`);
+    b.onclick = () => choose(i); box.append(b);
+    const o = document.createElement('option'); o.value = i; o.textContent = `${it.done ? '✅' : '❌'} ${it.n}. ${it.name}`; o.selected = i === cur; og.append(o);
+  });
+}
+function choose(i) { cur = i; drawList(); show(); }
+$('pickItem').onchange = e => choose(+e.target.value);
+
+// ---- colours ----
+function setColor(c) { color = c; $('picker').value = c; $('nowSw').style.background = c; $('nowHex').textContent = c.toUpperCase();
+  document.querySelectorAll('.sw').forEach(s => s.classList.toggle('on', s.dataset.c.toLowerCase() === c.toLowerCase())); }
+function swatches(el, list) { for (const c of list) { const s = document.createElement('button'); s.className = 'sw'; s.dataset.c = c; s.style.background = c; s.title = c; s.setAttribute('aria-label', c); s.onclick = () => setColor(c); el.append(s); } }
+swatches($('theme'), THEME); swatches($('more'), MORE);
+$('picker').oninput = e => setColor(e.target.value);
+
+// ---- painting (only inside the item's shape) ----
+function hexRGB(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function paint(x, y) {
+  const it = ITEMS[cur]; if (x < 0 || y < 0 || x >= it.cv.width || y >= it.cv.height) return;
+  const d = it.cx.getImageData(x, y, 1, 1); if (d.data[3] === 0) return;
+  const [r, g, b] = hexRGB(color);
+  if (d.data[0] === r && d.data[1] === g && d.data[2] === b && d.data[3] === 255) return;
+  if (stroke) stroke.push([x, y, ...d.data]);
+  d.data[0] = r; d.data[1] = g; d.data[2] = b; d.data[3] = 255;
+  it.cx.putImageData(d, x, y); it.done = true;
+  updatePixel(x, y, color); drawGrid(); remember(it);
+}
+let stroke = null;
+function startStroke() { stroke = []; ITEMS[cur].hist.push(stroke); }
+function undo() {
+  const it = ITEMS[cur]; let s;
+  while ((s = it.hist.pop()) && !s.length);
+  if (!s) { say('Nothing to undo.'); return; }
+  for (const [x, y, r, g, b, a] of s.reverse()) it.cx.putImageData(new ImageData(new Uint8ClampedArray([r, g, b, a]), 1, 1), x, y);
+  show(); remember(it); say('');
+}
+$('undo').onclick = undo;
+addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); } });
+let saveTimer;
+function remember(it) { clearTimeout(saveTimer); saveTimer = setTimeout(() => { put('tp:' + it.id, it.cv.toDataURL()); put('tp:done:' + it.id, '1'); drawList(); }, 300); }
+
+// ---- 2D pixel grid ----
+const grid = $('grid'), gx = grid.getContext('2d');
+function drawGrid() {
+  const it = ITEMS[cur], w = it.cv.width, h = it.cv.height, S = 640; grid.width = S; grid.height = S;
+  const cell = S / Math.max(w, h);
+  const st = getComputedStyle(document.documentElement), A = st.getPropertyValue('--cellA'), B = st.getPropertyValue('--cellB');
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { gx.fillStyle = (x + y) % 2 ? A : B; gx.fillRect(x * cell, y * cell, cell, cell); }
+  gx.imageSmoothingEnabled = false; gx.drawImage(it.cv, 0, 0, w * cell, h * cell);
+  if (w <= 32) { gx.strokeStyle = 'rgba(0,0,0,.25)'; gx.lineWidth = 1; gx.beginPath();
+    for (let i = 0; i <= w; i++) { gx.moveTo(i * cell + .5, 0); gx.lineTo(i * cell + .5, h * cell); gx.moveTo(0, i * cell + .5); gx.lineTo(w * cell, i * cell + .5); } gx.stroke(); }
+}
+let gridDown = false;
+function gridAt(e) { const r = grid.getBoundingClientRect(), it = ITEMS[cur], n = Math.max(it.cv.width, it.cv.height);
+  paint(Math.floor((e.clientX - r.left) / r.width * n), Math.floor((e.clientY - r.top) / r.height * n)); }
+grid.onpointerdown = e => { gridDown = true; grid.setPointerCapture(e.pointerId); startStroke(); gridAt(e); };
+grid.onpointermove = e => { if (gridDown) gridAt(e); };
+grid.onpointerup = grid.onpointercancel = () => gridDown = false;
+
+// ---- 3D view ----
+const view = $('view');
+const renderer = new THREE.WebGLRenderer({ canvas: view, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#121c33');
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 500); camera.position.set(0, 0, 40);
+scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(10, 20, 30); scene.add(sun);
+const back = new THREE.DirectionalLight(0xB0CBE6, 0.8); back.position.set(-10, -5, -30); scene.add(back);
+const holder = new THREE.Group(); scene.add(holder); holder.rotation.set(-0.25, 0.6, 0);
+let mesh = null, cells = null, tex = null;
+
+function show() {
+  const it = ITEMS[cur]; $('title').textContent = `${it.n}. ${it.name}`;
+  if (mesh) { holder.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
+  if (tex) { tex.dispose(); tex = null; }
+  const w = it.cv.width, h = it.cv.height, k = 16 / Math.max(w, h);
+  if (it.kind === 'cube') {
+    tex = new THREE.CanvasTexture(it.cv); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.colorSpace = THREE.SRGBColorSpace;
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(14, 14, 14), new THREE.MeshLambertMaterial({ map: tex })); cells = null;
+  } else {
+    const px = it.cx.getImageData(0, 0, w, h).data; cells = { list: [], at: new Map() };
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (px[(y * w + x) * 4 + 3] > 0) { cells.at.set(y * w + x, cells.list.length); cells.list.push([x, y]); }
+    mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(k, k, k), new THREE.MeshLambertMaterial(), cells.list.length);
+    const m = new THREE.Matrix4(), c = new THREE.Color();
+    cells.list.forEach(([x, y], i) => {
+      m.makeTranslation((x - w / 2 + .5) * k, (h / 2 - y - .5) * k, 0); mesh.setMatrixAt(i, m);
+      const o = (y * w + x) * 4; c.setRGB(px[o] / 255, px[o + 1] / 255, px[o + 2] / 255, THREE.SRGBColorSpace); mesh.setColorAt(i, c);
+    });
+  }
+  holder.add(mesh); drawGrid();
+}
+function updatePixel(x, y, hex) {
+  if (tex) { tex.needsUpdate = true; return; }
+  const i = cells.at.get(y * ITEMS[cur].cv.width + x); if (i === undefined) return;
+  mesh.setColorAt(i, new THREE.Color().setStyle(hex, THREE.SRGBColorSpace)); mesh.instanceColor.needsUpdate = true;
+}
+
+// drag = spin, two fingers = zoom, a tap without moving = paint
+const pts = new Map(); let moved = 0, pinch = 0;
+const zoom = z => camera.position.z = Math.min(90, Math.max(12, z));
+view.onpointerdown = e => { pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); view.setPointerCapture(e.pointerId); if (pts.size === 1) moved = 0; else moved = 99; view.style.cursor = 'grabbing'; };
+view.onpointermove = e => {
+  const p = pts.get(e.pointerId); if (!p) return;
+  if (pts.size === 2) { const [a, b] = [...pts.values()]; const d0 = Math.hypot(a.x - b.x, a.y - b.y);
+    p.x = e.clientX; p.y = e.clientY; const [c, d] = [...pts.values()]; const d1 = Math.hypot(c.x - d.x, c.y - d.y);
+    zoom(camera.position.z * d0 / Math.max(d1, 1)); return; }
+  const dx = e.clientX - p.x, dy = e.clientY - p.y; moved += Math.abs(dx) + Math.abs(dy);
+  holder.rotation.y += dx * 0.01; holder.rotation.x += dy * 0.01; p.x = e.clientX; p.y = e.clientY;
+};
+view.onpointerup = e => { const tap = pts.size === 1 && moved < 6; pts.delete(e.pointerId); view.style.cursor = 'grab'; if (tap) pick(e); };
+view.onpointercancel = e => pts.delete(e.pointerId);
+view.addEventListener('wheel', e => { e.preventDefault(); zoom(camera.position.z + e.deltaY * 0.03); }, { passive: false });
+const ray = new THREE.Raycaster();
+function pick(e) {
+  const r = view.getBoundingClientRect(); ray.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
+  const hit = ray.intersectObject(mesh)[0]; if (!hit) return; const it = ITEMS[cur]; startStroke();
+  if (tex) paint(Math.floor(hit.uv.x * it.cv.width), Math.floor((1 - hit.uv.y) * it.cv.height));
+  else { const [x, y] = cells.list[hit.instanceId]; paint(x, y); }
+}
+function resize() { const r = view.parentElement.getBoundingClientRect(); renderer.setSize(r.width, r.height, false); camera.aspect = r.width / r.height; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize);
+renderer.setAnimationLoop(() => renderer.render(scene, camera));
+
+// ---- saving ----
+const say = t => $('status').textContent = t;
+const pngOf = it => new Promise(r => it.cv.toBlob(r, 'image/png'));
+async function offerFile(filename, blob) {
+  const api = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+  if (api) { try { await api.save({ filename, data: blob }); return 'Saved ' + filename; }
+             catch (err) { return err && err.code === 'declined' ? 'Not saved.' : 'Saving is not possible here.'; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); return 'Saved ' + filename;
+}
+$('png').onclick = async () => {
+  const it = ITEMS[cur];
+  say(await offerFile(it.out.split('/').pop(), await pngOf(it)));
+};
+$('zip').onclick = async () => {
+  const painted = ITEMS.filter(it => it.done);
+  if (!painted.length) { say('Paint something first.'); return; }
+  say('Making the pack…');
+  const zip = new JSZip(); zip.file('pack.mcmeta', PACK_MCMETA);
+  for (const it of painted) zip.file('assets/minecraft/' + it.out, await pngOf(it));
+  const blob = await zip.generateAsync({ type: 'blob' });
+  say(await offerFile('pvp-pack.zip', blob) + ` (${painted.length} items). Put it in .minecraft/resourcepacks.`);
+};
+
+// folder saving: only in Chrome/Edge on a computer, opened as a file (not inside a frame)
+let inFrame = true; try { inFrame = window.top !== window; } catch {}
+if (window.showDirectoryPicker && !inFrame) { $('connect').hidden = false; $('save').hidden = false; }
+async function fileIn(root, path, create) {
+  const parts = ('assets/minecraft/' + path).split('/'); let d = root;
+  for (const p of parts.slice(0, -1)) d = await d.getDirectoryHandle(p, { create });
+  return d.getFileHandle(parts.at(-1), { create });
+}
+$('connect').onclick = async () => {
+  try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); } catch { return; }
+  try { await dir.getFileHandle('pack.mcmeta'); } catch { dir = null; say('That is not the pack. Pick the "resourcepack" folder.'); return; }
+  let found = 0;
+  for (const it of ITEMS) {
+    try { const f = await (await fileIn(dir, it.out, false)).getFile(); const img = await loadImg(URL.createObjectURL(f));
+      if (!img) continue; it.cv.width = img.width; it.cv.height = img.height; it.cx.drawImage(img, 0, 0); it.done = true; it.hist = []; found++; } catch {}
+  }
+  say(`Connected. Found ${found} saved textures.`); drawList(); show();
+};
+$('save').onclick = async () => {
+  const it = ITEMS[cur];
+  if (!dir) { say('Connect the pack folder first.'); return; }
+  try { const w = await (await fileIn(dir, it.out, true)).createWritable(); await w.write(await pngOf(it)); await w.close();
+    it.done = true; put('tp:done:' + it.id, '1'); say(`Saved ${it.name} ✅`); drawList();
+  } catch (err) { say('Could not save: ' + err.message); }
+};
+
+setColor(color); drawList(); resize(); show();
+</script>
+
+</body></html>
