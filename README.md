@@ -1,10 +1,9 @@
-[README.md](https://github.com/user-attachments/files/35229228/README.md)
 # Texture Painter
 
 A free website for painting Minecraft Java PvP item textures, pixel by pixel, with a 3D preview.
 Made by krisz (with Claude) for his PvP resource pack.
 
-Website: https://chriscodeclaude.github.io/texture-painter/
+Website: https://chriscodeclaude.github.io/minecraft-texture-painter/
 
 ## What it does
 
